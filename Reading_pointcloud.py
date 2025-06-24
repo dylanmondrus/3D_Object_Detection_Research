@@ -1,7 +1,7 @@
 import numpy as np
 import glob
 import os
-#hello
+#hello.
 
 def read_point_cloud(file_path: str) -> np.ndarray:
     """
