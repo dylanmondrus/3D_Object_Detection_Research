@@ -1,0 +1,85 @@
+import os
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from Reading_pointcloud import read_point_cloud
+from voxelnet import VoxelNet
+import numpy as np
+
+class LidarDataset(Dataset):
+    def __init__(self, pointcloud_dir, label_dir, limit=None):
+        self.pc_files = sorted([os.path.join(pointcloud_dir, f) for f in os.listdir(pointcloud_dir) if f.endswith('.bin')])
+        self.label_files = sorted([os.path.join(label_dir, f) for f in os.listdir(label_dir) if f.endswith('.txt')])
+        
+        if limit is not None:
+            self.pc_files = self.pc_files[:limit]
+            self.label_files = self.label_files[:limit]
+
+
+    def __len__(self):
+        return len(self.pc_files)
+
+    def __getitem__(self, idx):
+        pc = read_point_cloud(self.pc_files[idx])  # (N, 4)
+        with open(self.label_files[idx], 'r') as f:
+            first_line = f.readline().strip().split()
+            h, w, l = map(float, first_line[8:11])
+            x, y, z = map(float, first_line[11:14])
+            ry = float(first_line[14])
+            label = np.array([x, y, z, l, w, h, ry], dtype=np.float32)
+
+        
+        voxel_data = self.voxelize(pc)
+        voxel_tensor = torch.tensor(voxel_data, dtype=torch.float32)
+        label_tensor = torch.tensor(label, dtype=torch.float32)
+        
+        return voxel_tensor, label_tensor
+
+    def voxelize(self, pc):
+        # Dummy voxelization to (V, T, 4); replace with real voxelization logic
+        voxel_count = 100
+        points_per_voxel = 5
+        padded = np.zeros((voxel_count, points_per_voxel, 4), dtype=np.float32)
+        indices = np.random.choice(pc.shape[0], min(voxel_count * points_per_voxel, pc.shape[0]), replace=False)
+        sampled = pc[indices].reshape(-1, points_per_voxel, 4)
+        padded[:sampled.shape[0]] = sampled
+        return padded
+
+def train(model, dataloader, optimizer, criterion, device):
+    model.train()
+    total_loss = 0
+    for batch_idx, (voxels, labels) in enumerate(dataloader):
+        voxels, labels = voxels.to(device), labels.to(device)
+        optimizer.zero_grad()
+        outputs = model(voxels)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    return total_loss / len(dataloader)
+
+def main():
+    pointcloud_dir = "C:/Users/dylan/OneDrive/Desktop/Research_Summer_2025/Data/velodyne"
+    label_dir = "C:/Users/dylan/OneDrive/Desktop/Research_Summer_2025/Data/label_2"
+
+    batch_size = 2
+    lr = 1e-3
+    num_epochs = 10
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    dataset = LidarDataset(pointcloud_dir, label_dir) #limit goes here
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    model = VoxelNet().to(device)
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    for epoch in range(num_epochs):
+        loss = train(model, dataloader, optimizer, criterion, device)
+        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss:.4f}")
+
+    torch.save(model.state_dict(), "voxelnet.pth")
+
+if __name__ == "__main__":
+    main()
